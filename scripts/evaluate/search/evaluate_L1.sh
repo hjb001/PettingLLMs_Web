@@ -22,15 +22,15 @@ export LD_LIBRARY_PATH=$CUDA_HOME/targets/x86_64-linux/lib:$CUDA_HOME/lib64:$LD_
 # Configuration - Edit these parameters
 # ============================================
 MODEL_PATHS=(
-    "your model path"
+    "/home/nvidia/data/models/Qwen2.5-7B-Instruct"
 )
 
 # Assuming execution from repository root
 REPO_ROOT="$(pwd)"
 CONFIG_PATH="${REPO_ROOT}/pettingllms/config/search"
 CONFIG_NAME="search_L1_prompt"
-BENCHMARK="bamboogle"   # {bamboogle, 2wiki, hotpotqa, musique}
-MAX_TURNS=5
+BENCHMARK="gaia_text_only"   # {bamboogle, 2wiki, hotpotqa, musique, gaia_text_only}
+MAX_TURNS=12
 EVAL_TEMPERATURE=0
 BASE_VLLM_PORT=8401
 BASE_PROXY_PORT=8420
@@ -286,6 +286,3 @@ echo
 echo "======================================"
 echo "Evaluation completed successfully!"
 echo "======================================"
-
-
-

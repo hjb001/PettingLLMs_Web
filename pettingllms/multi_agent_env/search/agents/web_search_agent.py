@@ -153,6 +153,45 @@ class WebSearchAgent(Agent):
         if current_sub_question_index >= len(sub_questions):
             return
 
+        # Check if we're in the answer phase (search results are available)
+        search_results = getattr(env_data.state, "web_search_formatted_results", "")
+        if search_results and "No search results found" not in search_results:
+            # We have search results, so we should be extracting an answer
+            extracted_answer = extract_answer_from_response(self.current_action)
+            if extracted_answer:
+                # Store the answer for the current sub-question
+                if current_sub_question_index < len(env_data.state.sub_answers):
+                    env_data.state.sub_answers[current_sub_question_index] = extracted_answer
+                    
+                    # Move to next sub-question
+                    env_data.state.current_sub_question_index += 1
+                    
+                    # Clear search results for next sub-question
+                    env_data.state.web_search_formatted_results = ""
+                    
+                    logger.info(f"Answer stored for sub-question {current_sub_question_index + 1}: {extracted_answer}")
+                    
+                    # Check if all sub-questions are completed
+                    if env_data.state.current_sub_question_index >= len(sub_questions):
+                        logger.info("All sub-questions have been answered")
+                        self.agent_reward = 0.5  # Reward for completing all sub-questions
+                    else:
+                        self.agent_reward = 0.1  # Small reward for answering a sub-question
+
+            # Store final extracted answer for tracking
+            env_data.state.web_search_extracted_answer = extracted_answer
+            if extracted_answer is not None:
+                env_data.state.web_search_extracted_answer_list.append(extracted_answer)
+            else:
+                env_data.state.web_search_extracted_answer_list.append("No answer found")
+
+            # Ensure agent_reward is not None before converting to float
+            if self.agent_reward is None:
+                self.agent_reward = 0.0
+            self.reward_history.append(float(self.agent_reward))
+            return
+
+        # We're in the search phase (no search results available yet)
         # Extract and execute search query if present
         search_query = extract_search_query_from_response(self.current_action)
         if search_query:
@@ -172,8 +211,9 @@ class WebSearchAgent(Agent):
             
             logger.info(f"Web search performed for sub-question {current_sub_question_index + 1} with query: '{search_query}'")
         else:
-            # Check if this is an answer to the current sub-question
+            # Check if this is an answer to the current sub-question (even without search results)
             extracted_answer = extract_answer_from_response(self.current_action)
+            logger.info(f"Extracted answer for sub-question {current_sub_question_index + 1}: {extracted_answer}")
             if extracted_answer:
                 # Store the answer for the current sub-question
                 if current_sub_question_index < len(env_data.state.sub_answers):

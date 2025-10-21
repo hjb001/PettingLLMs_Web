@@ -112,6 +112,13 @@ class SearchEnv(Env):
             await self._web_search_step(action, env_worker)
         else:
             raise ValueError(f"Invalid role: {role}")
+        
+        # Check if all sub-questions have been answered and trigger final synthesis
+        if (self.state.decomposition_complete and 
+            self.state.sub_questions and
+            self.state.current_sub_question_index >= len(self.state.sub_questions)):
+            # All sub-questions have been answered, the environment should be ready for final synthesis
+            pass  # The reasoning agent will be called next to synthesize the final answer
 
     async def _reasoning_step(self, action: str, env_worker: Any = None):
         """
@@ -220,10 +227,11 @@ class SearchEnvBatch:
         
         # Load search problems
         # Default benchmark for test mode is "bamboogle", but ignored for train mode
-        benchmark_name = getattr(config, "benchmark", "bamboogle") if hasattr(config, "benchmark") else "bamboogle"
+        benchmark_name = getattr(config, "benchmark", "gaia_text_only") if hasattr(config, "benchmark") else "gaia_text_only"
         self.problem_list = load_search_problem_batch(env_indices, dataset_name=benchmark_name, mode=mode, config=config)
         
         if mode == "validate":
+            logger.info(f"problem_list_len{len(self.problem_list)}")
             rollout_idx_list = range(len(self.problem_list) * samples)
             samples = 1
         

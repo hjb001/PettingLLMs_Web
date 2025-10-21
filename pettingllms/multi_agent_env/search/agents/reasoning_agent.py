@@ -167,8 +167,10 @@ class ReasoningAgent(Agent):
             # Final synthesis phase - extract answer
             extracted_answer = extract_answer_from_response(self.current_action)
             env_data.state.reasoning_extracted_answer = extracted_answer
+            env_data.state.final_answer = extracted_answer 
             if extracted_answer is not None:
                 env_data.state.reasoning_extracted_answer_list.append(extracted_answer)
+                env_data.state.final = True
             else:
                 env_data.state.reasoning_extracted_answer_list.append("No answer found")
 

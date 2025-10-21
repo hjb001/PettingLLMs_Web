@@ -17,6 +17,110 @@ DEFAULT_TIMEOUT = 30
 MAX_RETRIES = 10
 INITIAL_RETRY_DELAY = 1
 
+# Google Custom Search API configuration
+GOOGLE_SEARCH_API_KEY = "AIzaSyCmZiriBo_WcKIxNTwkKA8m9hNG1Qb5ovA"
+GOOGLE_SEARCH_API_URL = "https://www.googleapis.com/customsearch/v1"
+GOOGLE_SEARCH_Engine_ID = "15ca3bd0d247448a0"
+def call_google_search_api(
+    query: str,
+    api_key: str = GOOGLE_SEARCH_API_KEY,
+    cx: Optional[str] = GOOGLE_SEARCH_Engine_ID,
+    num_results: int = 5,
+    timeout: int = DEFAULT_TIMEOUT,
+    log_requests: bool = True,
+) -> tuple[Optional[Dict[str, Any]], Optional[str]]:
+    """
+    Calls the Google Custom Search API with a single query.
+
+    Args:
+        query: The query to search for.
+        api_key: Google Custom Search API key.
+        cx: Custom Search Engine ID (optional).
+        num_results: Number of results to return (default: 5).
+        timeout: The timeout for the request.
+        log_requests: Whether to log requests.
+
+    Returns:
+        response: The response from the search API (json if successful, None otherwise)
+        error_msg: The error message if the request failed.
+    """
+    request_id = str(uuid.uuid4())
+    log_prefix = f"[Google Search Request ID: {request_id}] "
+    
+    # Prepare parameters
+    params = {
+        "key": api_key,
+        "q": query,
+        "cx" : GOOGLE_SEARCH_Engine_ID,
+        "num": min(num_results, 5),  # Google API limits to 10 results per request
+    }
+    
+    
+    last_error = None
+    for attempt in range(MAX_RETRIES):
+        try:
+            if log_requests:
+                logger.info(
+                    f"{log_prefix}Attempt {attempt + 1}/{MAX_RETRIES}: Calling Google Search API at {GOOGLE_SEARCH_API_URL}"
+                )
+                
+            response = requests.get(
+                GOOGLE_SEARCH_API_URL,
+                params=params,
+                timeout=timeout,
+            )
+
+            # Check for Gateway Timeout (504) and other server errors for retrying
+            if response.status_code in [500, 502, 503, 504]:
+                last_error = f"{log_prefix}API Request Error: Server Error ({response.status_code}) on attempt {attempt + 1}/{MAX_RETRIES}"
+                logger.warning(last_error)
+                if attempt < MAX_RETRIES - 1:
+                    delay = INITIAL_RETRY_DELAY * (attempt + 1)
+                    logger.info(f"{log_prefix}Retrying after {delay} seconds...")
+                    time.sleep(delay)
+                continue
+
+            # Check for other HTTP errors (e.g., 4xx)
+            response.raise_for_status()
+
+            # If successful (status code 2xx)
+            if log_requests:
+                logger.info(f"{log_prefix}Google Search API call successful on attempt {attempt + 1}")
+
+            return response.json(), None
+
+        except requests.exceptions.ConnectionError as e:
+            last_error = f"{log_prefix}Connection Error: {e}"
+            logger.warning(last_error)
+            if attempt < MAX_RETRIES - 1:
+                delay = INITIAL_RETRY_DELAY * (attempt + 1)
+                logger.info(f"{log_prefix}Retrying after {delay} seconds...")
+                time.sleep(delay)
+            continue
+        except requests.exceptions.Timeout as e:
+            last_error = f"{log_prefix}Timeout Error: {e}"
+            logger.warning(last_error)
+            if attempt < MAX_RETRIES - 1:
+                delay = INITIAL_RETRY_DELAY * (attempt + 1)
+                logger.info(f"{log_prefix}Retrying after {delay} seconds...")
+                time.sleep(delay)
+            continue
+        except requests.exceptions.RequestException as e:
+            last_error = f"{log_prefix}API Request Error: {e}"
+            break  # Exit retry loop on other request errors
+        except json.JSONDecodeError as e:
+            raw_response_text = response.text if "response" in locals() else "N/A"
+            last_error = f"{log_prefix}API Response JSON Decode Error: {e}, Response: {raw_response_text[:200]}"
+            break  # Exit retry loop on JSON decode errors
+        except Exception as e:
+            last_error = f"{log_prefix}Unexpected Error: {e}"
+            break  # Exit retry loop on other unexpected errors
+
+    # If all attempts failed
+    logger.error(f"{log_prefix}API Request Failed after {MAX_RETRIES} attempts: {last_error}")
+
+    return None, last_error
+
 def truncatefn(s, length=300):
     """Truncate text to specified length while preserving context."""
     if not isinstance(s, str):
@@ -58,7 +162,7 @@ def extract_answer_from_response(response: str) -> Optional[str]:
     ]
     
     for pattern in patterns:
-        match = re.search(pattern, response, re.IGNORECASE | re.MULTILINE)
+        match = re.search(pattern, response, re.IGNORECASE | re.MULTILINE | re.DOTALL)
         if match:
             return match.group(1).strip()
     
@@ -178,8 +282,7 @@ def load_search_problem_batch(
                 batch_results.append(problem_dict)
     else:
         # Validation mode: use all samples or subset based on env_indices
-        max_samples = min(len(ds), len(env_indices) if env_indices else len(ds))
-        for i in range(max_samples):
+        for i in range(1):
             example = ds[i]
             problem_dict = _format_search_problem(example, i, mode="validate")
             if problem_dict:
@@ -505,6 +608,7 @@ def format_sub_answers_text(sub_questions: List[str], sub_answers: List[str]) ->
     
     return formatted_text
 
+# ... existing code ...
 class SearchAPIClient:
     """Client for handling search API calls with session pooling."""
     
@@ -531,12 +635,15 @@ class SearchAPIClient:
                 logger.info(f"Created shared session pool for {base_url}")
             return cls._session_pool[base_url]
 
-    def __init__(self, search_url=None, topk=3, timeout=DEFAULT_TIMEOUT, log_requests=True):
+    def __init__(self, search_url=None, topk=3, timeout=DEFAULT_TIMEOUT, log_requests=True, 
+                 use_google_api=False, google_cx=None):
         # Get search URL from environment variable or use default
         self.search_url = search_url or os.getenv("SEARCH_API_URL", "http://127.0.0.1:8000/retrieve")
         self.topk = topk
         self.timeout = timeout
         self.log_requests = log_requests
+        self.use_google_api = use_google_api or os.getenv("USE_GOOGLE_SEARCH_API", "false").lower() == "true"
+        self.google_cx = google_cx or os.getenv("GOOGLE_SEARCH_CX")
 
         # Extract base URL for session sharing
         parsed_url = urlparse(self.search_url)
@@ -564,6 +671,52 @@ class SearchAPIClient:
         query = query.strip()
         topk = max_results if max_results is not None else self.topk
 
+        # Use Google Custom Search API if enabled
+        if self.use_google_api:
+            try:
+                api_response, error_msg = call_google_search_api(
+                    query=query,
+                    num_results=topk,
+                    timeout=self.timeout,
+                    log_requests=self.log_requests,
+                    cx=self.google_cx
+                )
+
+                if error_msg:
+                    logger.error(f"Google Search API error for query '{query}': {error_msg}")
+                    return []
+
+                if not api_response:
+                    logger.warning(f"No response from Google Search API for query '{query}'")
+                    return []
+
+                # Parse the Google API response
+                items = api_response.get("items", [])
+                if not items:
+                    logger.info(f"No search results found for query '{query}'")
+                    return []
+
+                # Convert Google API response to expected format
+                search_results = []
+                for item in items:
+                    search_results.append({
+                        "title": item.get("title", ""),
+                        "snippet": item.get("snippet", ""),
+                        "content": item.get("snippet", ""),
+                        "url": item.get("link", "")
+                    })
+
+                if self.log_requests:
+                    logger.info(f"Google Search API returned {len(search_results)} results for query '{query}'")
+
+                return search_results
+
+            except Exception as e:
+                logger.error(f"Exception during Google Search API call for query '{query}': {e}")
+                # Fall through to original search method if Google API fails
+                pass
+
+        # Original search method as fallback
         try:
             api_response, error_msg = call_search_api(
                 retrieval_service_url=self.search_url,
@@ -615,6 +768,7 @@ class SearchAPIClient:
             return []
 
 
+
 # Global search client instance
 _search_client = None
 
@@ -622,7 +776,7 @@ def get_search_client() -> SearchAPIClient:
     """Get or create the global search client instance."""
     global _search_client
     if _search_client is None:
-        _search_client = SearchAPIClient()
+        _search_client = SearchAPIClient(use_google_api=True)
     return _search_client
 
 def simulate_web_search(query: str, max_results: int = 5) -> List[Dict[str, Any]]:
